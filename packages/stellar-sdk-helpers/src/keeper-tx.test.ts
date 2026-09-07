@@ -3,8 +3,10 @@ import {
   assertAdapterUnchanged,
   expectString,
   isDefinitiveOnChainFailure,
+  isMigrationCooldownError,
   isStaleAdapterError,
   isTransientKeeperError,
+  MIGRATION_COOLDOWN_ERROR_TEXT,
   rawErrorText,
   StaleAdapterError,
   STALE_ADAPTER_MESSAGE,
@@ -124,6 +126,29 @@ describe("keeper-tx", () => {
       expect(isStaleAdapterError(err)).toBe(true);
       expect(isStaleAdapterError(new Error(STALE_ADAPTER_MESSAGE))).toBe(true);
       expect(isStaleAdapterError(new Error("Other error"))).toBe(false);
+    });
+
+    it("isMigrationCooldownError", () => {
+      // The real shape a simulation rejection surfaces as (see
+      // MigrationCooldownNotMet = 20 in
+      // packages/contracts/vault/src/errors.rs): a HostError whose first
+      // line is the bare contract error code, detail (if any) further down
+      // in the event log. errorMessage() only looks at that first line, so
+      // this doesn't need to reproduce the full event log to match.
+      expect(
+        isMigrationCooldownError(
+          new Error("HostError: Error(Contract, #20)\nEvent log ...")
+        )
+      ).toBe(true);
+      expect(
+        isMigrationCooldownError(new Error(MIGRATION_COOLDOWN_ERROR_TEXT))
+      ).toBe(true);
+      // A different contract error code must not false-positive as a
+      // cooldown rejection.
+      expect(
+        isMigrationCooldownError(new Error("HostError: Error(Contract, #13)"))
+      ).toBe(false);
+      expect(isMigrationCooldownError(new Error("Other error"))).toBe(false);
     });
   });
 

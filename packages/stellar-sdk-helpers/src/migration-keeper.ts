@@ -37,6 +37,7 @@ import {
 import {
   assertAdapterUnchanged,
   expectString,
+  isMigrationCooldownError,
   isStaleAdapterError,
   isTransientKeeperError,
   submitKeeperOperation,
@@ -1099,10 +1100,11 @@ export async function runMigrationKeeper(
     // here, this only checks whether a matching snapshot exists; if the
     // cooldown hasn't elapsed yet, the contract itself rejects the call
     // with MigrationCooldownNotMet during simulation (no fee, nothing
-    // sent), which falls through to the existing failure handling below
-    // and is retried on a later run. That is comfortably fine given
-    // MIN_LEDGER_GAP is ~1 minute and this keeper runs far less often
-    // than that.
+    // sent). That rejection is caught below (isMigrationCooldownError)
+    // and reported as a skip, not a failure: #557 lengthened
+    // MIN_LEDGER_GAP from ~1 minute to ~1 day, so this is the expected,
+    // steady-state outcome for roughly a day's worth of hourly runs per
+    // migration, not an error condition (#725).
     //
     // Skipped entirely when deps.submitMigration is injected: that's a
     // full override of the on-chain submission mechanism (see its use
@@ -1216,6 +1218,25 @@ export async function runMigrationKeeper(
         attempts: result.attempts,
       });
     } catch (err) {
+      if (isMigrationCooldownError(err)) {
+        // Same rationale as the comment above the begin_migration branch:
+        // #557 made this the expected steady-state outcome for roughly a
+        // day's worth of hourly runs per migration, not a failure (#725).
+        skipped.push({
+          vaultId: vault.vaultId,
+          reason:
+            "migration cooldown not yet elapsed; will retry once MIN_LEDGER_GAP has passed",
+        });
+        logger.info(
+          "[migration-keeper] migrate_adapter deferred; cooldown not yet elapsed",
+          {
+            vaultId: vault.vaultId,
+            toAdapterId: best.adapterId,
+            toProtocol: best.protocol,
+          }
+        );
+        continue;
+      }
       if (isStaleAdapterError(err)) {
         // A static, address-free reason, not redactedErrorMessage(err):
         // the underlying message embeds two full C-addresses, which with

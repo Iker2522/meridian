@@ -832,6 +832,48 @@ describe("runMigrationKeeper", () => {
     ]);
   });
 
+  it("reports MigrationCooldownNotMet as a skip, not a failure, while MIN_LEDGER_GAP hasn't elapsed (#725)", async () => {
+    // #557 lengthened MIN_LEDGER_GAP from ~1 minute to ~1 day; every hourly
+    // run in that window used to hit this same rejection and get reported
+    // as a failure, producing roughly 24 consecutive false-positive
+    // failures (and pages, if wired to one) per migration.
+    const sleep = vi.fn();
+    const submitMigration = vi.fn(async () => {
+      throw new Error(
+        "HostError: Error(Contract, #20)\nEvent log (newest first):\n..."
+      );
+    });
+    const rateSource = vi.fn(async ({ protocol }: { protocol: string }) =>
+      protocol === "blend" ? 500 : 600
+    );
+
+    const result = await runMigrationKeeper(CONFIG, {
+      logger: logger(),
+      discoverVaults: async () => ({
+        vaults: [DISCOVERED_VAULT],
+        failures: [],
+      }),
+      rateSource,
+      resolveCandidatePool: async () => "CDEFINDEXPOOL",
+      submitMigration,
+      sleep,
+    });
+
+    expect(submitMigration).toHaveBeenCalledOnce();
+    // Not retried: the cooldown won't have elapsed by the next attempt
+    // moments later either, so retrying within this run just burns the
+    // function's time budget for no chance of a different outcome.
+    expect(sleep).not.toHaveBeenCalled();
+    expect(result.migrations).toEqual([]);
+    expect(result.failures).toEqual([]);
+    expect(result.skipped).toMatchObject([
+      {
+        vaultId: "meridian-usdc",
+        reason: expect.stringContaining("cooldown"),
+      },
+    ]);
+  });
+
   it("retries a transient submission failure and eventually succeeds", async () => {
     const sleep = vi.fn();
     const submitMigration = vi
