@@ -31,7 +31,7 @@ Unlike `admin`/`usdc`/`musdc`/`adapter`, which are constructor arguments chosen 
 | Migration keeper default/max slippage (`MERIDIAN_MIGRATION_MAX_SLIPPAGE_BPS`)   | default `100` bps, max `500` bps | Runtime env var, `packages/stellar-sdk-helpers/src/migration-keeper.ts` | This one _is_ a deploy-time choice, not a compiled constant, but its ceiling is enforced against the contract's own `MAX_ADMIN_SLIPPAGE_BPS` above, so it cannot be configured into a state the contract would reject anyway.                                                                                                                 |
 | Migration keeper minimum improvement (`MERIDIAN_MIGRATION_MIN_IMPROVEMENT_BPS`) | default `50` bps                 | Runtime env var                                                         | Minimum rate improvement a candidate protocol must clear before the keeper migrates to it, to avoid churning between two protocols within noise of each other.                                                                                                                                                                                |
 
-Also confirm before building: `CONTRACT_ADDRESSES.mainnet` and `KNOWN_POOLS.mainnet` in `packages/shared/src/constants.ts` / `packages/stellar-sdk-helpers/src/known-pools.ts` are still placeholder-empty as of this writing (no Meridian vault, DeFindex vault/factory, or per-pool Blend addresses populated for mainnet). See "Updating the app to use the new deployment" below for what fills these in, and don't assume they're already correct just because the testnet equivalents are.
+Also confirm before building: `CONTRACT_ADDRESSES.mainnet` and `KNOWN_POOLS.mainnet` in `packages/shared/src/constants.ts` / `packages/stellar-sdk-helpers/src/known-pools.ts` now carry the real Meridian vault/mUSDC/Blend-pool addresses from the "Mainnet deployment record" below (DeFindex vault/factory are still placeholder-empty; no DeFindex mainnet deployment has happened). See "Updating the app to use the new deployment" below for what fills these in on a future redeploy, and don't assume they're already correct just because the testnet equivalents are.
 
 ## Deployment sequence
 
@@ -91,10 +91,39 @@ None of these block a mainnet deploy today. What remains before going live:
 
 - [ ] Security audit commissioned and findings resolved (firm-only engagement, explicitly out of scope for this runbook, see the note at the top)
 - [ ] `ADMIN` key custody finalized (hardware-backed or multisig, per "Prerequisites specific to mainnet") and its holder(s) briefed on the incident-response runbook (#721) once it exists
-- [ ] `scripts/deploy-mainnet.sh`'s `ALLOWED_BLEND_POOL_IDS` allow-list populated with a reviewed mainnet Blend pool address, and the script rehearsed at least once (against testnet's own RPC, editing its URLs temporarily) by whoever will run it for real
+- [x] `scripts/deploy-mainnet.sh`'s `ALLOWED_BLEND_POOL_IDS` allow-list populated with a reviewed mainnet Blend pool address (independently verified against a real on-chain deposit transaction, not just the label). Not separately rehearsed against testnet's own RPC first; the deploy below was its first real run.
 - [ ] #721 (incident-response runbook) landed and its holder(s) briefed, so a live incident has a documented playbook to follow rather than being improvised
 - [ ] `MERIDIAN_KEEPER_SECRET_KEY` / `MERIDIAN_MIGRATION_KEEPER_SECRET_KEY` funded and their custody model decided (folded into `ADMIN`'s multisig, or a separate operational key)
 - [ ] `UPSTASH_REDIS_REST_URL`/`_TOKEN`, `CRON_SECRET`, and `MERIDIAN_ALERT_WEBHOOK_URL` configured on the production deployment before the first scheduled keeper run, not after
 - [ ] `.github/workflows/keepers.yml`'s cron schedule enabled against the production `API_BASE_URL`
-- [ ] `CONTRACT_ADDRESSES.mainnet` / `KNOWN_POOLS.mainnet` populated with the real deployed addresses per "Updating the app to use the new deployment"
-- [ ] Post-deploy verification chain (step 5 of "Deployment sequence") run and its output recorded, the same way the 2026-08-20 testnet cutover's verification is recorded in "Vault migration history"
+- [x] `CONTRACT_ADDRESSES.mainnet` / `KNOWN_POOLS.mainnet` populated with the real deployed addresses per "Updating the app to use the new deployment"
+- [x] Post-deploy verification chain (step 5 of "Deployment sequence") run and its output recorded, see "Mainnet deployment record" below
+
+## Mainnet deployment record
+
+**Current deployment**, live as of 2026-09-07, using `mainnet-deployer` (`GAAMI2TTCG4526SWGFDA4LOBEOPLYFUMMGMSLRMWNMC4PGCC5F2SOVZU`) as `DEPLOYER` and `mainnet-admin` (`GBO6FBVTHGNDT33T4MCW3FAVIRP3H2LAHURRK6B4B23274V6RMFHOWMW`) as `ADMIN`/`ADMIN_KEY`, wired to Circle's mainnet USDC and the Blend mainnet USDC pool (Fixed V2). No audit was commissioned before this deploy; see the security-audit checklist item above, still open.
+
+- vault: `CBRAD5MD7CCXNXRLRGTRKG4NNZKR3N643VUEBNJGWB2L6KLZDLFWMXHQ`
+- blend-adapter: `CBNKERYAG7VZNBH2V3TF5JBXLD3MXLVQW5GG4AO445EUDCPKP4D2DDP2`
+- mUSDC: `CAEJJPN73VOEWUVCXCXMIXOHMFLUXAYVFMCTCJHQFI5R2NIB2S5YTOFL`
+- USDC: `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
+- Blend pool: `CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD`
+
+Deployed from WASM built on a genuine Linux CI runner (`stellar contract build` on `ubuntu-latest`, matching the byte-for-byte hashes the "Verify On-Chain Bytecode" check independently rebuilds), not built locally, so step 6 of "Deployment sequence" is satisfied for this deployment: vault hash `5378f8b59421aea057285208a071494264f4eda6e435ed5f37672dba87cba967`, blend-adapter hash `01ace3aab3f4d6c3e3fff59ac943e274ea4502a711106988b6e625adffc34369`, mUSDC hash `48c5b2d5b72be2fdbc5c406b6867c69b5630125685ffc321569bd2cf8d3267a3`. `deploy-vault-stack.sh` gained a `SKIP_BUILD` env var for this: it lets a caller drop a WASM already verified elsewhere into `packages/contracts/target/wasm32v1-none/release` without the script's own build silently overwriting it with a locally-built one first.
+
+Verification chain, run against the live contracts after deployment (not just the deploy script's own reported success):
+
+- `vault.get_admin()` → `mainnet-admin`'s address, matches `ADMIN`
+- `vault.get_adapter()` → the blend-adapter address above
+- `vault.is_paused()` → `false`
+- `vault.get_total_shares()` → `0`
+- `blend-adapter.get_pool()` → the Blend pool address above
+- `blend-adapter.get_protocol()` → `"blend"`
+- `mUSDC.admin()` → the vault address above
+- `mUSDC.name()` / `symbol()` / `decimals()` → `"Meridian USDC"` / `"mUSDC"` / `7`
+
+**Superseded first deployment.** An earlier deploy the same day landed at vault `CCJZCEF47TMOA6ECPQD5LZZ2H75YX53FUEZJQZSJLGK4TWGXQZG2KODU` (blend-adapter `CADWOVTT5KUFFSTIQ3T5XPAQISEDQYPMSJ4CEU2CRGOBKA5QP4BRROBJ`, mUSDC `CDNQXOWKOCWB4YVK33HACZ2O2OL7C7ZZ37AJRWZDZQ2QK52NYW7ATDFS`), built locally on Windows. Running the "Verify On-Chain Bytecode" check against it afterward found its vault bytecode (`a7ab7080a05a4355384d00fc6150c4238228cdb27680b448c98ba407de5c4d0e`) did not match a from-source Linux rebuild at all, the same non-reproducibility gap documented in the testnet doc's "A note on reproducible builds", just not caught before this deploy instead of before it. Nothing was functionally wrong with that vault and it never took a deposit, but its bytecode could not be independently verified against this repo's source, so it was abandoned rather than trusted. It is never linked to by the app and should not receive deposits; do not reuse this address.
+
+Two deploy attempts against the first (now-abandoned) vault's precomputed address failed partway through before it fully deployed, each due to transient RPC issues rather than any logic or funding problem confirmed to have actually landed on-chain (checked directly against Horizon/RPC before retrying each time, never assumed): an initial run hit `TxInsufficientBalance` on the vault WASM upload (mainnet Soroban code-storage rent for these contract sizes runs to tens of XLM, not the few XLM assumed going in) and a `transaction submission timeout` on the mUSDC deploy; a second run then hit a `transaction submission timeout` on the blend-adapter deploy, twice, across two different public RPC endpoints. Both left a permanently orphaned blend-adapter deployed against a vault address whose salt was not yet persisted anywhere (`CDOFBH7DHACLERGQB56GDXHOZOMUCEHCMPOWIVTAFZBJXJC7GRETP6GD`, wired to the never-deployed `CAH5LOUGQPHAIUMQPUOVFAFNEEZTHJI7IVIAJ7DEC6RA45DJG577ZK4L` — harmless, holds no funds, not referenced anywhere). `deploy-vault-stack.sh` gained a `VAULT_SALT` env var for this, printed on every run, so a future partial failure can resume at the same reserved address instead of repeating this.
+
+The redeploy from a verified Linux build (the current deployment above) itself needed several retries past the vault's own resumable salt, each confirmed not to have landed before retrying: a `transaction submission timeout` on the mUSDC deploy, then a `TxInsufficientFee` and two more timeouts on the blend-adapter deploy across separate retries. `VAULT_SALT` only protects the vault's own reserved address; blend-adapter and mUSDC have no equivalent, so each retry past a successful blend-adapter deploy creates a new one rather than resuming. Two more blend-adapters ended up orphaned this way, both correctly wired to the real vault address above but not the one it actually references: `CDGWQLZOTQO4WFVB7ELUNC24YSJBXF3MGBR5VWGP4ZGEM3O4IHZ4NL52` and `CCAUC2KH6WDIZI2Q4QAXMA2SRKVLRBHFGEYPQYVFWTEDGSO3WCH3CNT4`. Same as the other orphans: harmless, no funds, not referenced anywhere. Making blend-adapter/mUSDC deploys resumable the same way `VAULT_SALT` protects the vault is a reasonable follow-up, not done here.

@@ -29,6 +29,18 @@
 #                          convenience reintroduced through the back door.
 #   USDC_ID                USDC contract address to wire the adapter to.
 #   BLEND_POOL_ID          Blend pool contract address to wire the adapter to.
+#   VAULT_SALT             Optional. Reuse the salt printed by a previous
+#                          failed run to resume at the same reserved vault
+#                          address instead of stranding its already-deployed
+#                          blend-adapter/mUSDC. Leave unset for a fresh
+#                          deploy: a random salt is generated and printed.
+#   SKIP_BUILD             Optional. Set (to any value) to skip `stellar
+#                          contract build` and use the WASM already present
+#                          in packages/contracts/target/wasm32v1-none/release
+#                          as-is. For deploying a build already verified
+#                          elsewhere (e.g. downloaded from a genuine Linux CI
+#                          build) without this script's own build silently
+#                          overwriting it with a locally-built one first.
 #
 # After sourcing, call deploy_vault_stack. It sets VAULT_ID, BLEND_ADAPTER_ID,
 # MUSDC_ID, and VAULT_INITIALIZED (1 if the vault itself was deployed this
@@ -57,9 +69,17 @@ deploy() {
 }
 
 deploy_vault_stack() {
-  echo "Building contracts..."
   cd "$(dirname "${BASH_SOURCE[0]}")/../../packages/contracts"
-  stellar contract build
+  # SKIP_BUILD lets a caller drop in WASM already verified elsewhere (e.g. a
+  # genuine Linux CI build, downloaded to sidestep `stellar contract build`'s
+  # non-reproducibility across platforms) without this rebuilding over it
+  # locally. Unset by default: a normal run always builds from source here.
+  if [ -z "${SKIP_BUILD:-}" ]; then
+    echo "Building contracts..."
+    stellar contract build
+  else
+    echo "Skipping build (SKIP_BUILD set); using WASM already in target/wasm32v1-none/release."
+  fi
 
   # `stellar contract build` targets wasm32v1-none, not wasm32-unknown-unknown.
   local wasm_dir="target/wasm32v1-none/release"
@@ -89,9 +109,18 @@ deploy_vault_stack() {
   # is deployed to that exact same address with a matching --salt. The
   # source account used here must be ADMIN_ADDRESS, since it must match
   # whoever actually sources the vault's own deploy below.
-  local vault_salt
-  vault_salt=$(openssl rand -hex 32)
+  # Generated fresh on every run and never persisted, so a run that fails
+  # after this point (e.g. blend-adapter or mUSDC deploys below) used to
+  # strand those contracts permanently: the vault address they were wired to
+  # could never be deployed to again once the salt that produced it was
+  # gone. VAULT_SALT lets a retry after a partial failure reuse the exact
+  # same salt (and therefore the same reserved VAULT_ID) so blend-adapter
+  # and mUSDC deploys already on-chain from the failed run stay usable
+  # instead of being orphaned. Always echoed below so it can be recovered
+  # from terminal scrollback even if the caller didn't set it.
+  local vault_salt="${VAULT_SALT:-$(openssl rand -hex 32)}"
   VAULT_ID=$(stellar contract id wasm "${STELLAR_NETWORK_FLAGS[@]}" --source-account "$ADMIN_ADDRESS" --salt "$vault_salt")
+  echo "VAULT_SALT (save this: re-run with VAULT_SALT=$vault_salt to resume at the same address if this run fails partway): $vault_salt"
   echo "Reserved vault contract ID: $VAULT_ID"
 
   # The adapter's vault/pool/USDC wiring is passed as constructor arguments,
