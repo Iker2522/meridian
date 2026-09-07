@@ -153,6 +153,28 @@ export function isStaleAdapterError(err: unknown): boolean {
   return errorMessage(err).includes(STALE_ADAPTER_MESSAGE);
 }
 
+// migrate_adapter's on-chain MigrationCooldownNotMet rejection (#20 in
+// packages/contracts/vault/src/errors.rs), surfaced from simulation as the
+// raw contract error text below, not a custom Error subclass: unlike
+// StaleAdapterError above, nothing in this codebase constructs this
+// rejection, it comes straight from the contract, so there's no call site
+// to throw a typed error from in the first place. Matched by message text
+// for the same reason isStaleAdapterError is: withKeeperRetry's wrapping
+// loses the original error's type by the time this runs.
+//
+// A benign, expected outcome, not a failure: #557 lengthened
+// MIN_LEDGER_GAP from ~1 minute to ~1 day specifically so an observer has
+// a full day to notice and react to a suspicious begin_migration before
+// migrate_adapter can execute. Every hourly run during that window is
+// expected to hit this rejection until the cooldown elapses; treating it
+// as a failure would page on end-to-end intended behavior for roughly 24
+// consecutive runs per migration (#725).
+export const MIGRATION_COOLDOWN_ERROR_TEXT = "Error(Contract, #20)";
+
+export function isMigrationCooldownError(err: unknown): boolean {
+  return errorMessage(err).includes(MIGRATION_COOLDOWN_ERROR_TEXT);
+}
+
 /**
  * Re-reads the vault's live `get_adapter()` and throws StaleAdapterError if
  * it no longer matches what this run discovered. A cheap, best-effort guard

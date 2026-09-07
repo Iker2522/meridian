@@ -225,22 +225,27 @@ chosen candidate:
    before. The keeper does not duplicate the contract's ledger-gap math to
    decide whether the cooldown has elapsed: if it hasn't, `migrate_adapter`
    itself rejects the call with `MigrationCooldownNotMet` during simulation
-   (no fee, nothing sent), which is reported as a `failures` entry and
-   naturally retried on a later scheduled run.
+   (no fee, nothing sent). This is detected the same way the stale-adapter
+   race is (`isMigrationCooldownError`, matching the contract's `#20` error
+   code in the raw simulation error text) and reported as a `skipped`
+   outcome, not a `failures` entry, so it's naturally retried on a later
+   scheduled run without being treated as an error.
 
-   This was deliberately simple rather than precise while `MIN_LEDGER_GAP`
-   was ~1 minute, since the cooldown had always long since elapsed by the
-   run after `begin_migration` fired. Now that it's ~1 day (#557), every
-   hourly run during that window hits the same rejection and reports it as
-   a `failures` entry, so a single migration currently produces roughly a
-   day's worth of expected-but-noisy failed runs before it can proceed.
-   Tracked as a follow-up to special-case `MigrationCooldownNotMet` as a
-   `skipped` outcome the same way a stale-adapter race already is.
+   This was deliberately left as a generic `failures` entry while
+   `MIN_LEDGER_GAP` was ~1 minute, since the cooldown had always long since
+   elapsed by the run after `begin_migration` fired, making the distinction
+   moot in practice. Once #557 lengthened it to ~1 day, every hourly run
+   during that window hit the same rejection and reported it as a
+   `failures` entry, producing roughly a day's worth of false-positive
+   failed runs (and paging, if wired to one) per migration before it could
+   proceed. Fixed in #725 by special-casing it the same way the
+   stale-adapter race already was.
 
 A migration to a given candidate therefore now normally spans roughly a
 day's worth of scheduled runs: the one that calls `begin_migration`, then
-repeated (currently failing) attempts, and finally the run where
-`migrate_adapter` succeeds once the on-chain snapshot is old enough.
+repeated (correctly reported as skipped, not failed) waiting runs, and
+finally the run where `migrate_adapter` succeeds once the on-chain
+snapshot is old enough.
 
 ## Retry And Failure Handling
 
