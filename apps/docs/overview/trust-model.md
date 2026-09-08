@@ -24,7 +24,7 @@ for their current status before relying on this page for a custody decision.
 A single `Address` stored as `ADMIN` gates every one of these. There is no
 per-action co-signer or committee check inside the contract itself — whatever
 `ADMIN` resolves to (a plain key, a hardware-backed key, a Stellar-native
-multisig account) *is* the entire on-chain access-control model for all five:
+multisig account) _is_ the entire on-chain access-control model for all five:
 
 - **`set_paused(bool)`** — an emergency switch that rejects new deposits
   while set. **Withdrawals are deliberately left callable regardless of
@@ -70,7 +70,7 @@ the caller's own signature where a signature is required at all.
   key is compromised, because there is no code-level lever labeled
   "upgrade" for a compromised key to pull.
 - **Admin actions cannot touch individual depositor balances directly.**
-  `set_adapter`/`migrate_adapter` move the vault's *aggregate* adapter
+  `set_adapter`/`migrate_adapter` move the vault's _aggregate_ adapter
   position; per-depositor accounting (`Principal`, `Entry`, mUSDC balances)
   is denominated in vault shares and is untouched by either call — see
   "Vault (`meridian-vault`)" in `docs/contracts.md`.
@@ -88,7 +88,7 @@ the caller's own signature where a signature is required at all.
 ## Key-loss and key-compromise consequences
 
 **There is no on-chain recovery from a lost or destroyed `ADMIN` key.**
-`transfer_admin` requires the *current* admin's `require_auth()` (see the
+`transfer_admin` requires the _current_ admin's `require_auth()` (see the
 function's doc comment in
 `packages/contracts/vault/src/lib.rs`).
 If that key is gone before a successor is nominated and has accepted, no
@@ -105,16 +105,20 @@ adapters, or migrate going forward, not depositor access to their own funds.
 transaction**, per the bounds in "What the admin key can do" above: a
 `migrate_adapter` call is capped at 5% loss versus the pre-migration
 snapshot and cannot execute until a day after the matching `begin_migration`
-call. The vault's own doc comments name this explicitly (see
-`migrate_adapter`'s doc comment in
-`packages/contracts/vault/src/lib.rs`):
-the `~1-day timelock ... is the only thing standing between a leaked key and
-the vault's entire position moving to an address the attacker controls` —
-the timelock is a detection-and-reaction *window*, not a mechanism that
-prevents the outcome outright. It only has value if something is actually
-watching (the [alert keeper](../operations/alert-keeper.md)) and someone is
-positioned to react (a completed `transfer_admin`/`accept_admin` rotation,
-or pausing deposits, before the cooldown elapses) — see the
+call. The vault's own doc comments name this explicitly. `begin_migration`'s
+doc comment states plainly that the delay itself is
+`the only thing standing between a leaked key and the vault's entire
+position moving to an address the attacker controls`; `migrate_adapter`'s
+own doc comment makes the same point independently, in its own words, citing the
+same `MIN_LEDGER_GAP` mechanism as `what actually stands between a
+compromised key and total loss`. Both are in
+`packages/contracts/vault/src/lib.rs`. The timelock is a
+detection-and-reaction _window_, not a mechanism that prevents the outcome
+outright. It only has value if something is actually watching (the
+[alert keeper](../operations/alert-keeper.md)) and someone is positioned to
+react — `migrate_adapter`'s doc comment names the same two options this page
+does: rotating the admin key via `transfer_admin`/`accept_admin`, or pausing
+deposits, before the cooldown elapses — see the
 "Rollback plan" section of
 [Mainnet Deployment](../operations/mainnet-deployment.md#rollback-plan) for
 what reacting in time actually involves, and the incident-response runbook
@@ -134,7 +138,7 @@ empty vault) rather than fund loss.
 **A compromised key that also completes `transfer_admin`/`accept_admin`
 before the legitimate admin reacts is a full, permanent handover** — the
 two-step design (see "What the admin key can do") protects against a
-*mistyped* successor address, not a malicious one with its own signature
+_mistyped_ successor address, not a malicious one with its own signature
 ready to call `accept_admin` immediately. Detecting and reacting to a
 suspicious `transfer_admin` nomination before its matching `accept_admin`
 lands is the same race the migration timelock exists for, without a
@@ -146,7 +150,7 @@ incident category #721 will need to cover.
 - `docs/contracts.md` — the contract-architecture
   reference this page assumes as background (adapter model, share pricing,
   immutability rationale).
-- `SECURITY.md` — vulnerability *disclosure* policy:
+- `SECURITY.md` — vulnerability _disclosure_ policy:
   how to report a finding, not a description of the trust model itself.
 - [Mainnet Deployment](../operations/mainnet-deployment.md) — the current
   live deployment's actual parameter values, addresses, and go-live
@@ -155,5 +159,5 @@ incident category #721 will need to cover.
 - **#721** (incident-response runbook, not yet written) — the operational
   playbook for what to actually do during a live incident (a suspected key
   compromise, a decision to pause, rotating a keeper secret). This page
-  documents what the contract *enforces*; #721 will document what
-  *people* do in response.
+  documents what the contract _enforces_; #721 will document what
+  _people_ do in response.
